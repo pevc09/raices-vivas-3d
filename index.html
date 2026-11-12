@@ -85,6 +85,14 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--terra);outline-
 .btn[aria-pressed="true"]{background:var(--terra);border-color:var(--terra);color:#fff7ef}
 .field{display:flex;gap:6px;margin-top:8px}
 .field input{flex:1;min-width:0;border:1px solid var(--line);background:#fff;border-radius:3px;padding:9px 10px;font:400 14px/1.2 var(--body);color:var(--ink)}
+.preg{margin:12px 0 0;padding:12px 12px 8px;border:1px solid var(--line);border-left:3px solid var(--terra);border-radius:3px;background:var(--cream)}
+.preg + .preg{margin-top:8px}
+.preg .pq{display:block;font:500 14px/1.35 var(--body);color:var(--ink);margin:0 0 4px}
+.preg .pk{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--terra);margin-bottom:4px}
+.preg .escala{display:flex;gap:4px;margin-top:6px}
+.preg .escala .btn{flex:1;padding:10px 0;text-align:center;font-size:14px}
+.preg .ext{display:flex;justify-content:space-between;gap:8px;font-size:11.5px;color:var(--muted);margin-top:4px}
+.preg .ok{font-size:12px;color:var(--olive);min-height:16px;margin-top:6px}
 .quote{font:500 italic 21px/1.25 var(--display);color:var(--olive);border:1px solid var(--line);border-radius:3px;padding:12px 14px;margin:6px 0 12px;background:var(--cream)}
 .list{list-style:none;padding:0;margin:4px 0 12px;display:grid;gap:8px}
 .list li{font-size:13.5px;line-height:1.45}
@@ -213,6 +221,7 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--terra);outline-
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
+<script src="preguntas.js"></script>
 <script>
 (() => {
 'use strict';
@@ -245,19 +254,23 @@ const registro = (() => {
       if (!ok) fetch(REGISTRO_URL, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain' }, body: cuerpo, keepalive: true }).catch(() => {});
     }
   }
-  function log(evento, detalle = '') {
+  function log(evento, detalle = '', extra) {
     if (!activo) return;
     const seg = Math.round((performance.now() - t0) / 1000), clave = evento + '|' + detalle + '|' + seg;
     if (clave === ultimo) return; ultimo = clave;
-    cola.push({ t: new Date().toLocaleString('sv-SE'), seg, evento, detalle: String(detalle).slice(0, 200) });
+    cola.push(Object.assign({ t: new Date().toLocaleString('sv-SE'), seg, evento, detalle: String(detalle).slice(0, 200) }, extra));
     if (cola.length >= 20) enviar(); else if (!timer) timer = setTimeout(enviar, 4000);
+  }
+  // Respuesta a una pregunta del recorrido: va a la hoja «Respuestas» y también a «Interacciones».
+  function respuesta(p, valor, paso) {
+    log('respuesta', `${p.id} · ${valor}`, { pregunta_id: p.id, pregunta: p.texto, respuesta: String(valor).slice(0, 200), paso });
   }
   addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') { log('sale de la página'); enviar(true); } else log('vuelve a la página');
   });
   addEventListener('pagehide', () => enviar(true));
   log('abre el recorrido');
-  return { log };
+  return { log, respuesta };
 })();
 
 function rng(seed) {
@@ -1892,6 +1905,40 @@ function wireCard() {
   if (next) next.onclick = () => tourIndex >= TOUR.length - 1 ? endTour() : tourStep(tourIndex + 1);
   if (start) start.onclick = () => tourStep(0);
   const free = $('#freeExplore'); if (free) free.onclick = () => { registro.log('explora libremente'); card.hidden = true; };
+  cardBody.querySelectorAll('[data-resp]').forEach(b => b.onclick = () => responder(b.dataset.resp, b.dataset.val));
+  cardBody.querySelectorAll('[data-enviar]').forEach(b => {
+    const inp = cardBody.querySelector(`[data-texto="${b.dataset.enviar}"]`), go = () => responder(b.dataset.enviar, inp.value);
+    b.onclick = go; inp.onkeydown = e => { if (e.key === 'Enter') go(); };
+  });
+}
+
+/* ---------- Preguntas del recorrido guiado (definidas en preguntas.js) ---------- */
+const PREGUNTAS = window.RV_PREGUNTAS || [];
+const respuestas = {};
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+function buscarPregunta(id) {
+  for (let paso = 0; paso < PREGUNTAS.length; paso++) { const p = (PREGUNTAS[paso] || []).find(q => q.id === id); if (p) return { p, paso }; }
+  return null;
+}
+function preguntasBlock(i) {
+  const lista = PREGUNTAS[i] || [];
+  return lista.map(p => {
+    const r = respuestas[p.id], ok = `<div class="ok" data-ok="${p.id}">${r != null ? 'Respuesta guardada. ¡Gracias!' : ''}</div>`;
+    let campo = '';
+    if (p.tipo === 'opcion') campo = `<div class="row">${p.opciones.map(o => `<button class="btn" data-resp="${p.id}" data-val="${esc(o)}" aria-pressed="${r === o}">${esc(o)}</button>`).join('')}</div>`;
+    else if (p.tipo === 'escala') campo = `<div class="escala">${[1, 2, 3, 4, 5].map(n => `<button class="btn" data-resp="${p.id}" data-val="${n}" aria-pressed="${r === String(n)}" aria-label="${n} de 5">${n}</button>`).join('')}</div><div class="ext"><span>${esc(p.min || '')}</span><span>${esc(p.max || '')}</span></div>`;
+    else campo = `<div class="field"><input data-texto="${p.id}" maxlength="160" placeholder="${esc(p.placeholder || 'Escribe tu respuesta')}" value="${esc(r || '')}" aria-label="${esc(p.texto)}"><button class="btn solid" data-enviar="${p.id}">Enviar</button></div>`;
+    return `<div class="preg"><div class="pk">Pregunta</div><label class="pq">${esc(p.texto)}</label>${campo}${ok}</div>`;
+  }).join('');
+}
+function responder(id, valor) {
+  const hit = buscarPregunta(id); if (!hit) return;
+  valor = String(valor || '').trim();
+  if (!valor) { toast('Escribe tu respuesta antes de enviarla.'); return; }
+  respuestas[id] = valor;
+  registro.respuesta(hit.p, valor, hit.paso + 1);
+  cardBody.querySelectorAll(`[data-resp="${id}"]`).forEach(b => b.setAttribute('aria-pressed', String(b.dataset.val === valor)));
+  const ok = cardBody.querySelector(`[data-ok="${id}"]`); if (ok) ok.textContent = 'Respuesta guardada. ¡Gracias!';
 }
 function refreshAudioButtons() { cardBody.querySelectorAll('[data-snd]').forEach(b => { if (b.dataset.snd !== 'stop') b.setAttribute('aria-pressed', String(soundOn === b.dataset.snd)); }); }
 
@@ -1942,7 +1989,7 @@ function tourStep(i) {
   let h = `<div class="kick"><span>Recorrido del usuario · Paso ${i + 1} de ${TOUR.length}</span></div><h2>${t.verb}</h2>${verbBlock(t.icon, String(i + 1).padStart(2, '0') + ' · ' + t.verb, where)}<p>${t.text}</p>`;
   if (t.audio) h += audioBlock();
   if (t.note) h += noteBlock();
-  if (t.question) h += questionBlock();
+  h += preguntasBlock(i);
   h += `<div class="tourbar"><button class="btn" id="tPrev" ${i === 0 ? 'disabled style="opacity:.4"' : ''}>Anterior</button><div class="dots">${TOUR.map((_, k) => `<span class="${k === i ? 'on' : ''}"></span>`).join('')}</div><button class="btn solid" id="tNext">${i === TOUR.length - 1 ? 'Terminar' : 'Siguiente'}</button></div>`;
   setCard(h);
 }
