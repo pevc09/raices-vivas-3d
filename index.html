@@ -125,6 +125,7 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--terra);outline-
 .intro{position:fixed;z-index:8;right:calc(24px + env(safe-area-inset-right,0px));bottom:calc(24px + env(safe-area-inset-bottom,0px));width:min(430px,calc(100% - 28px));box-sizing:border-box;padding:18px 24px 20px;text-align:center}
 .intro h2{font:700 40px/1 var(--display);color:var(--olive);margin:8px 0 8px}
 .intro p{font:400 14.5px/1.5 var(--body);margin:0 0 14px;color:var(--ink)}
+.intro p.aviso{font-size:12px;margin:12px 0 0;color:var(--muted)}
 .btn.enter{background:var(--terra);border-color:var(--terra);color:#fff7ef;font-size:15px;letter-spacing:.14em;text-transform:uppercase;padding:13px 34px}
 .btn.enter:hover{background:#94452a}
 .outside .dock,.outside .tools,.outside .card,.outside #markers,.outside .dpad,.outside .hint{display:none!important}
@@ -205,6 +206,7 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--terra);outline-
   <h2>Raíces Vivas</h2>
   <p>El espacio sensorial está en el primer piso del edificio. Gira la vista para recorrer la fachada y entra cuando quieras.</p>
   <button class="btn enter" id="enterBtn">Ingresar</button>
+  <p class="aviso">Registramos de forma anónima cómo se usa este recorrido para mejorar el proyecto.</p>
 </section>
 
 <div class="toast" id="toast" role="status"></div>
@@ -222,6 +224,41 @@ const isTouch = matchMedia('(pointer: coarse)').matches;
 if (isTouch) document.body.classList.add('touch');
 const EYE = 1.62;
 const V3 = (x, y, z) => new THREE.Vector3(x, y, z);
+
+/* ---------- Registro de interacciones (Google Sheets) ---------- */
+// Pega aquí la URL de tu Aplicación web de Apps Script (termina en /exec).
+// Déjala vacía para desactivar el registro. Añade ?nolog a la dirección para probar sin registrar.
+const REGISTRO_URL = 'https://script.google.com/macros/s/AKfycbzpQgm8z3cLMNZuyleLzmtEEd5H-FHFojkxq2sEDXW3gIRRsT6oH4Oo_1aAtl_A3m4g/exec';
+const registro = (() => {
+  const activo = !!REGISTRO_URL && !new URLSearchParams(location.search).has('nolog');
+  const t0 = performance.now();
+  const visita = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  let origen = 'directo';
+  try { if (document.referrer) origen = new URL(document.referrer).hostname; } catch (_) {}
+  const base = { visita, dispositivo: isTouch ? 'táctil' : 'escritorio', idioma: navigator.language || '', origen };
+  const cola = []; let timer = null, ultimo = '';
+  function enviar(final) {
+    clearTimeout(timer); timer = null;
+    while (activo && cola.length) {
+      const cuerpo = JSON.stringify(Object.assign({}, base, { pantalla: innerWidth + 'x' + innerHeight, eventos: cola.splice(0, 50) }));
+      const ok = final && navigator.sendBeacon && navigator.sendBeacon(REGISTRO_URL, new Blob([cuerpo], { type: 'text/plain' }));
+      if (!ok) fetch(REGISTRO_URL, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'text/plain' }, body: cuerpo, keepalive: true }).catch(() => {});
+    }
+  }
+  function log(evento, detalle = '') {
+    if (!activo) return;
+    const seg = Math.round((performance.now() - t0) / 1000), clave = evento + '|' + detalle + '|' + seg;
+    if (clave === ultimo) return; ultimo = clave;
+    cola.push({ t: new Date().toLocaleString('sv-SE'), seg, evento, detalle: String(detalle).slice(0, 200) });
+    if (cola.length >= 20) enviar(); else if (!timer) timer = setTimeout(enviar, 4000);
+  }
+  addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') { log('sale de la página'); enviar(true); } else log('vuelve a la página');
+  });
+  addEventListener('pagehide', () => enviar(true));
+  log('abre el recorrido');
+  return { log };
+})();
 
 function rng(seed) {
   return function () {
@@ -1247,6 +1284,7 @@ function buildStreet() {
 
 function enterBuilding() {
   if (inside || entering) return;
+  registro.log('ingresa al edificio');
   entering = true; fovIn = true; $('#intro').hidden = true; controls.autoRotate = false; controls.enablePan = true;
   controls.minDistance = .3; controls.maxDistance = 220; controls.maxPolarAngle = 2.05;
   flyTo({ pos: V3(0, GROUND + 1.7, 27), target: V3(0, 3.2, 12) }, 2.8, () => {
@@ -1261,6 +1299,7 @@ function enterBuilding() {
 }
 function exitBuilding() {
   if (!inside || entering) return;
+  registro.log('sale al exterior');
   if (mode === 'walk') setMode('orbit');
   inside = false; fovIn = false; entering = true; card.hidden = true; stopSound(); tourIndex = -1;
   document.body.classList.add('outside'); updateHint();
@@ -1839,20 +1878,20 @@ function audioBlock() {
   return `<div class="row" id="audioRow">${['costa', 'sierra', 'selva'].map(k => `<button class="btn" data-snd="${k}" aria-pressed="${soundOn === k}">${ICONS.play} ${k[0].toUpperCase() + k.slice(1)}</button>`).join('')}<button class="btn" data-snd="stop">Detener</button></div><p class="muted" style="margin-top:8px">Paisajes sonoros sintetizados en el navegador como muestra del prototipo.</p>`;
 }
 function avBlock() { return `<p class="muted" style="margin-bottom:2px">Contenido proyectado. Elige uno para verlo en la pantalla con su audio:</p><div class="row">${AV_SLIDES.slice(1).map((sl, k) => `<button class="btn" data-slide="${k + 1}">${sl.short}</button>`).join('')}<button class="btn" data-snd="stop">Detener audio</button></div>`; }
-function noteBlock() { return `<label class="muted" for="noteInput">Una palabra o frase de tu origen</label><div class="field"><input id="noteInput" maxlength="42" placeholder="Ej.: el pan de mi abuela en Ayacucho"><button class="btn solid" id="noteAdd">Pegar</button></div>`; }
+function noteBlock() { return `<label class="muted" for="noteInput">Una palabra o frase de tu origen</label><div class="field"><input id="noteInput" maxlength="42" placeholder="Ej.: el pan de mi abuela en Ayacucho"><button class="btn solid" id="noteAdd">Pegar</button></div><p class="muted">Las notas se guardan de forma anónima para el estudio. No escribas datos personales.</p>`; }
 function questionBlock() { return `<div class="quote">¿Qué elemento de tu origen podría inspirar tu próxima creación?</div><p class="muted">Pregunta guía de la prueba con usuarios.</p>`; }
 
 function setCard(html) { cardBody.innerHTML = html; card.hidden = false; card.scrollTop = 0; wireCard(); }
 function wireCard() {
-  cardBody.querySelectorAll('[data-snd]').forEach(b => b.onclick = () => { const k = b.dataset.snd; if (k === 'stop') stopSound(); else playSound(k); refreshAudioButtons(); });
+  cardBody.querySelectorAll('[data-snd]').forEach(b => b.onclick = () => { const k = b.dataset.snd; registro.log('audio', k === 'stop' ? 'detener' : k); if (k === 'stop') stopSound(); else playSound(k); refreshAudioButtons(); });
   const add = $('#noteAdd'); if (add) { const inp = $('#noteInput'); add.onclick = () => addNote(inp.value); inp.onkeydown = e => { if (e.key === 'Enter') addNote(inp.value); }; }
-  cardBody.querySelectorAll('[data-slide]').forEach(b => b.onclick = () => { const i = +b.dataset.slide; setAVSlide(i, true); playSound(AV_SLIDES[i].snd); cardBody.querySelectorAll('[data-slide]').forEach(o => o.setAttribute('aria-pressed', String(o === b))); });
+  cardBody.querySelectorAll('[data-slide]').forEach(b => b.onclick = () => { const i = +b.dataset.slide; registro.log('panel audiovisual', AV_SLIDES[i].short); setAVSlide(i, true); playSound(AV_SLIDES[i].snd); cardBody.querySelectorAll('[data-slide]').forEach(o => o.setAttribute('aria-pressed', String(o === b))); });
   cardBody.querySelectorAll('[data-go]').forEach(b => b.onclick = () => goStation(b.dataset.go));
   const prev = $('#tPrev'), next = $('#tNext'), start = $('#startTour');
   if (prev) prev.onclick = () => tourStep(tourIndex - 1);
   if (next) next.onclick = () => tourIndex >= TOUR.length - 1 ? endTour() : tourStep(tourIndex + 1);
   if (start) start.onclick = () => tourStep(0);
-  const free = $('#freeExplore'); if (free) free.onclick = () => { card.hidden = true; };
+  const free = $('#freeExplore'); if (free) free.onclick = () => { registro.log('explora libremente'); card.hidden = true; };
 }
 function refreshAudioButtons() { cardBody.querySelectorAll('[data-snd]').forEach(b => { if (b.dataset.snd !== 'stop') b.setAttribute('aria-pressed', String(soundOn === b.dataset.snd)); }); }
 
@@ -1885,6 +1924,7 @@ function projectCard() {
 }
 
 function goStation(id, opts = {}) {
+  registro.log('estación', STATIONS[id] ? STATIONS[id].title : id);
   if (STATIONS[id]) { flyTo(STATION_VIEWS[id]); setCard(stationCard(id)); }
   else if (EXTRA_VIEWS[id]) { if (mode === 'walk' && (id === 'overview' || id === 'plan')) setMode('orbit'); flyTo(EXTRA_VIEWS[id]); if (!opts.keepCard) card.hidden = true; }
   tourIndex = opts.tour ? tourIndex : -1;
@@ -1894,6 +1934,7 @@ function goStation(id, opts = {}) {
 function tourStep(i) {
   if (i < 0) return;
   tourIndex = i; const t = TOUR[i];
+  registro.log('recorrido guiado', `paso ${i + 1} de ${TOUR.length} · ${t.verb}`);
   const v = t.view ? EXTRA_VIEWS[t.view] : (STATION_VIEWS[t.station] || EXTRA_VIEWS[t.station]);
   if (t.view && mode === 'walk') setMode('orbit');
   flyTo(v); currentId = t.view || t.station; updateDock();
@@ -1905,16 +1946,18 @@ function tourStep(i) {
   h += `<div class="tourbar"><button class="btn" id="tPrev" ${i === 0 ? 'disabled style="opacity:.4"' : ''}>Anterior</button><div class="dots">${TOUR.map((_, k) => `<span class="${k === i ? 'on' : ''}"></span>`).join('')}</div><button class="btn solid" id="tNext">${i === TOUR.length - 1 ? 'Terminar' : 'Siguiente'}</button></div>`;
   setCard(h);
 }
-function endTour() { tourIndex = -1; setCard(`<div class="kick"><span>Recorrido completo</span></div><h2>Distintas raíces, una misma comunidad creativa</h2><p>Ahora explora libremente: cambia a modo Caminar para recorrer el espacio a la altura de los ojos, o prueba la luz de tarde.</p><div class="row"><button class="btn solid" id="startTour">Repetir recorrido</button><button class="btn" id="freeExplore">Cerrar</button></div>`); }
+function endTour() { registro.log('recorrido guiado', 'completado'); tourIndex = -1; setCard(`<div class="kick"><span>Recorrido completo</span></div><h2>Distintas raíces, una misma comunidad creativa</h2><p>Ahora explora libremente: cambia a modo Caminar para recorrer el espacio a la altura de los ojos, o prueba la luz de tarde.</p><div class="row"><button class="btn solid" id="startTour">Repetir recorrido</button><button class="btn" id="freeExplore">Cerrar</button></div>`); }
 
 function showInfo(info) {
   if (info.type === 'station') return goStation(info.id);
   if (info.type === 'pin') {
     const p = info.pin;
+    registro.log('pin del mapa', `${p.title} · ${p.region}`);
     pinMeshes.forEach(m => m.material.emissiveIntensity = m.userData.pick.pin === p ? 2.2 : .4);
     setCard(`<div class="kick"><span>Mapa interactivo · ${p.name} · ${p.region}</span></div>${stationTitle('mapa', p.title)}<p>${p.text}</p><p class="muted">Pin del mapa interactivo. Cada relato se acompaña de una foto y un audio en el contenido digital.</p><div class="row"><button class="btn" data-go="mapa">Volver al mapa</button></div>`);
     return;
   }
+  registro.log('objeto', `${info.kicker} · ${info.title}`);
   setCard(`<div class="kick"><span>${info.kicker}</span></div><h2>${info.title}</h2><p>${info.text}</p>`);
 }
 
@@ -1922,6 +1965,7 @@ function addNote(text) {
   text = (text || '').trim();
   if (!text) { toast('Escribe una palabra o frase antes de pegarla.'); return; }
   if (noteCount >= noteSlots.length) { toast('El muro ya está lleno de historias. ¡Gracias!'); return; }
+  registro.log('nota en el mapa', text);
   const slot = noteSlots[noteCount++], t = Math.PI + slot.a * Math.PI / 180, rr = NICHE.r - .03;
   const m = new THREE.Mesh(new THREE.PlaneGeometry(.22, .22), new THREE.MeshStandardMaterial({ map: canvasTex(noteCanvas(text)), roughness: .9 }));
   m.position.set(Math.sin(t) * rr, slot.y, Math.cos(t) * rr); nicheGroup.add(m);
@@ -1992,6 +2036,7 @@ function updateTween(dt) {
 }
 function setMode(m) {
   if (m === mode) return;
+  registro.log('modo', m === 'walk' ? 'caminar' : 'orbitar');
   mode = m; tween = null;
   $('#mOrbit').setAttribute('aria-pressed', String(m === 'orbit')); $('#mWalk').setAttribute('aria-pressed', String(m === 'walk'));
   document.body.classList.toggle('walking', m === 'walk');
@@ -2102,10 +2147,10 @@ function wireUI() {
   $('#enterBtn').onclick = enterBuilding;
   $('#mOrbit').onclick = () => setMode('orbit');
   $('#mWalk').onclick = () => setMode('walk');
-  $('#tDay').onclick = e => { const on = dayTarget !== 1; dayTarget = on ? 1 : 0; e.currentTarget.setAttribute('aria-pressed', String(on)); $('#tDayLbl').textContent = on ? 'Luz de día' : 'Luz de tarde'; skyMat.userData.paint(on); toast(on ? 'Luz de día: el sol entra por los ventanales.' : 'Luz de tarde: dominan los focos cálidos de cada estación.'); };
-  $('#tLabels').onclick = e => { const on = e.currentTarget.getAttribute('aria-pressed') !== 'true'; e.currentTarget.setAttribute('aria-pressed', String(on)); document.body.classList.toggle('labels-off', !on); };
-  $('#tPeople').onclick = e => { const on = e.currentTarget.getAttribute('aria-pressed') !== 'true'; e.currentTarget.setAttribute('aria-pressed', String(on)); peopleGroup.visible = on; scene.traverse(o => { if (o.userData.person) o.visible = on; }); };
-  $('#tInfo').onclick = e => { const showing = e.currentTarget.getAttribute('aria-pressed') === 'true'; e.currentTarget.setAttribute('aria-pressed', String(!showing)); if (showing) card.hidden = true; else setCard(projectCard()); };
+  $('#tDay').onclick = e => { const on = dayTarget !== 1; dayTarget = on ? 1 : 0; registro.log('luz', on ? 'día' : 'tarde'); e.currentTarget.setAttribute('aria-pressed', String(on)); $('#tDayLbl').textContent = on ? 'Luz de día' : 'Luz de tarde'; skyMat.userData.paint(on); toast(on ? 'Luz de día: el sol entra por los ventanales.' : 'Luz de tarde: dominan los focos cálidos de cada estación.'); };
+  $('#tLabels').onclick = e => { const on = e.currentTarget.getAttribute('aria-pressed') !== 'true'; e.currentTarget.setAttribute('aria-pressed', String(on)); document.body.classList.toggle('labels-off', !on); registro.log('etiquetas', on ? 'mostrar' : 'ocultar'); };
+  $('#tPeople').onclick = e => { const on = e.currentTarget.getAttribute('aria-pressed') !== 'true'; e.currentTarget.setAttribute('aria-pressed', String(on)); peopleGroup.visible = on; scene.traverse(o => { if (o.userData.person) o.visible = on; }); registro.log('personas', on ? 'mostrar' : 'ocultar'); };
+  $('#tInfo').onclick = e => { const showing = e.currentTarget.getAttribute('aria-pressed') === 'true'; e.currentTarget.setAttribute('aria-pressed', String(!showing)); if (showing) card.hidden = true; else { registro.log('ficha del proyecto'); setCard(projectCard()); } };
   $('#cardClose').onclick = () => { card.hidden = true; $('#tInfo').setAttribute('aria-pressed', 'false'); };
   addEventListener('keydown', e => { if (e.target.tagName === 'INPUT') return; keys.add(e.code); if (mode === 'walk' && e.code.startsWith('Arrow')) e.preventDefault(); });
   addEventListener('keyup', e => keys.delete(e.code));
@@ -2217,7 +2262,7 @@ const fontsReady = document.fonts ? Promise.all([
   document.fonts.load('italic 500 30px "Cormorant Garamond"'), document.fonts.load('500 30px Jost'), document.fonts.load('600 30px Jost'),
 ]) : Promise.resolve();
 Promise.race([fontsReady, new Promise(r => setTimeout(r, 3000))]).catch(() => {}).then(() => {
-  try { init(); } catch (err) { console.error(err); $('#loader span').textContent = 'No se pudo iniciar WebGL en este navegador.'; }
+  try { init(); } catch (err) { console.error(err); registro.log('error', 'no se pudo iniciar WebGL'); $('#loader span').textContent = 'No se pudo iniciar WebGL en este navegador.'; }
 });
 })();
 </script>
